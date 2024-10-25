@@ -1,2 +1,5 @@
-# QE_problem_set
-QE_problem_set
+# Group members
+Shokoufeh Naseri
+Kevalyn Suwan 
+Reyhan Qurbanova
+Jan Szczepanek
