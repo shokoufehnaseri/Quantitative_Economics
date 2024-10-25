@@ -28,7 +28,7 @@ function count_positives_broadcasting(arr)
     sum(positive_elements)
 end
 
-# problem 6
+# problem6
 function standard_deviation(x)
     n = length(x)
     # Step 1: Calculate the mean
