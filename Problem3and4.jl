@@ -22,3 +22,29 @@ function count_positives(arr)
 end
 
 #Problem5
+function count_positives_broadcasting(arr)
+    
+    positive_elements = arr .> 0
+    sum(positive_elements)
+end
+
+# problem 6
+function standard_deviation(x)
+    n = length(x)
+    # Step 1: Calculate the mean
+    μ = sum(x) / n
+
+    # Step 2: Calculate the squared differences from the mean
+    squared_d = (x .- μ) .^ 2
+
+    # Step 3: Calculate the variance
+    variance = sum(squared_d) / (n - 1)
+
+    # Step 4: Calculate the standard deviation
+    SD = sqrt(variance)
+
+    # Step 5: Return the SD value
+    return SD
+end
+
+
