@@ -1,0 +1,35 @@
+# Load necessary libraries
+using CSV                # For reading CSV files
+using DataFrames         # For handling data in DataFrame format
+using StatsPlots         # For plotting (requires the Plots.jl backend)
+using Statistics         # For statistical functions like correlation
+
+# Read the CSV file and store it in a DataFrame
+df = CSV.read("/Users/reyhanqurbanova/Desktop/QEcon2024/dataset.csv", DataFrame)
+
+# Rename specific columns for easier referencing
+rename!(df, Symbol("4") => :Earnings, Symbol("11") => :Education, Symbol("40") => :HoursWorked)
+
+# Scatter plot of Education vs. Earnings
+@df df scatter(:Education, :Earnings, label="Education vs Earnings", xlabel="Education", ylabel="Earnings")
+
+# Scatter plot of Hours Worked vs. Earnings
+@df df scatter(:HoursWorked, :Earnings, label="Hours Worked vs Earnings", xlabel="Hours Worked", ylabel="Earnings")
+
+# Calculate correlation coefficients between variables
+correlation_education_earnings = cor(df.Education, df.Earnings)
+correlation_hoursworked_earnings = cor(df.HoursWorked, df.Earnings)
+
+# Print the correlation results
+println("Correlation between Education and Earnings: $correlation_education_earnings")
+println("Correlation between Hours Worked and Earnings: $correlation_hoursworked_earnings")
+
+
+
+# Analysis and comparison of results
+#Education vs. Earnings:
+#The correlation coefficient between education and earnings is 0.386, indicating a moderate positive relationship. This suggests that individuals with higher levels of education tend to earn more, though the relationship is not particularly strong. Education appears to be a factor in higher earnings but is likely not the sole determining factor.
+#Hours Worked vs. Earnings:
+#The correlation between hours worked and earnings is 0.248, indicating a weak positive relationship. This suggests that working more hours is associated with slightly higher earnings, but the effect is weaker compared to education. The relatively low correlation implies that hours worked may not have a substantial impact on earnings by itself.
+#Comparison of Education and Hours Worked on Earnings:
+#Education shows a stronger association with earnings than hours worked, as evidenced by its higher correlation (0.386 vs. 0.248). This indicates that, in this dataset, educational attainment has a more significant impact on earnings than the number of hours worked.#'
