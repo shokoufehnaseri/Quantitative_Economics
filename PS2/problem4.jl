@@ -27,7 +27,10 @@
 # creates a contour plot of the production function f (x1, x2 ) for
 # x1 ≥0, x2 ≥0.
 
-using PrettyTables, Plots, LaTeXStrings, LinearAlgebra, NLsolve, Optim, Roots, Calculus
+
+using NLopt
+using Plots
+
 
 # CES production function
 function ces_production_function(α, σ, x1, x2)
@@ -82,60 +85,60 @@ plot(plots..., layout=(1, 3), size=(1200, 400))
 # correctly and finds the correct solution. Note that the σ = 1 case
 # might need a special treatment.
 
-function cost_function(x, w1, w2)
-    return w1 * x[1] + w2 * x[2]  # Simple cost calculation
-end
-
-function ces_function(α, σ, x)
+# Define the CES production function
+function ces_production(x1, x2, α, σ)
     if σ == 1
-        # Special case for Cobb-Douglas production function
-        return x[1]^α * x[2]^(1 - α)
+        # Cobb-Douglas case
+        return x1^α * x2^(1 - α)
     else
-        # General case for CES production function
-        term1 = α * x[1]^((σ - 1) / σ)
-        term2 = (1 - α) * x[2]^((σ - 1) / σ)
-        return (term1 + term2)^(σ / (σ - 1))
+        # General CES case
+        return (α * x1^((σ - 1) / σ) + (1 - α) * x2^((σ - 1) / σ))^(σ / (σ - 1))
     end
 end
 
-function ces_cost_function(α, σ, w1, w2, y)
-    
-    objective(x) = cost_function(x, w1, w2)
-    
+# Cost function to minimize
+function cost_function(x, grad, α, σ, w1, w2, y)
+    if length(grad) > 0
+        # Gradient calculation can be added here if needed.
+        return NaN
+    end
+    # Cost: w1 * x1 + w2 * x2
+    return w1 * x[1] + w2 * x[2]
+end
 
-    constraint(x) = ces_function(α, σ, x) - y
+# Constraint function (production function equals target y)
+function constraint(x, grad, α, σ, y)
+    if length(grad) > 0
+        # Gradient calculation can be added here if needed.
+        return NaN
+    end
+    # f(x1, x2) - y = 0
+    return ces_production(x[1], x[2], α, σ) - y
+end
 
-    # our guess
-    x0 = [1.0, 1.0] 
-    
-    result = optimize(
-        x -> objective(x) + 1e6 * abs(constraint(x)), 
-        [1e-6, 1e-6],  # Lower bounds for x1, x2 
-        [Inf, Inf],    # Upper bounds for x1, x2 (no upper limit)
-        x0,
-        Fminbox(BFGS()),
-        Optim.Options(store_trace=true, extended_trace=true, iterations=5000)
-    )
-
-    
-    x_opt = Optim.minimizer(result)
-    cost_opt = Optim.minimum(result)
-
-    return cost_opt, x_opt
+# Solve optimization problem
+function optimize_cost(α, σ, w1, w2, y)
+    opt = Opt(:LN_COBYLA, 2)  # Using COBYLA algorithm
+    lower_bounds!(opt, [0.0, 0.0])  # Nonnegativity constraint
+    min_objective!(opt, (x, grad) -> cost_function(x, grad, α, σ, w1, w2, y))  # Objective function
+    equality_constraint!(opt, (x, grad) -> constraint(x, grad, α, σ, y), 1e-8)  # Constraint
+    initial_x = [1.0, 1.0]  # Initial guess
+    (min_cost, minimizer) = optimize(opt, initial_x)
+    return (min_cost, minimizer)
 end
 
 # Test the function
 α = 0.5
-σ = 0.5
-w1 = 2.0
-w2 = 1.5
-y = 10.0
+σ_values = [0.25, 1, 4]
+w1 = 1.0
+w2 = 1.0
+y = 1.0
 
+for σ in σ_values
+    min_cost, minimizer = optimize_cost(α, σ, w1, w2, y)
+    println("σ = $σ: Minimum cost = $min_cost, x1 = $(minimizer[1]), x2 = $(minimizer[2])")
+end
 
-
-cost, x_opt = ces_cost_function(α, σ, w1, w2, y)
-println("Optimal cost: $cost")
-println("Optimal x1, x2: $x_opt")
 
 
 # 4. Plot the cost function and the input demand functions (x1 and x2)
@@ -146,63 +149,35 @@ println("Optimal x1, x2: $x_opt")
 # function for this part, it is enough to write a script that first calls
 # the functions you wrote in the first part and then plots the results
 
-using Plots
 
-# Parameters
-α = 0.5
-w2 = 1.0
-y = 1.0
+# Generate cost and input demand plots
+function plot_cost_and_demand(α, σ_values, w1_range, w2, y)
+    costs = []
+    x1_values = []
+    x2_values = []
 
-σ_values = [0.25, 1.0, 4.0]  # Different values of σ
-w1_range = 0.5:0.1:5.0       # Range of w1 values
-
-# Initialize arrays to store results
-costs = Dict(σ => [] for σ in σ_values)
-x1_values = Dict(σ => [] for σ in σ_values)
-x2_values = Dict(σ => [] for σ in σ_values)
-# Compute results for each value of σ and w1
-for σ in σ_values
-    for w1 in w1_range
-        cost, x_opt = ces_cost_function(α, σ, w1, w2, y)
-        push!(costs[σ], cost)
-        push!(x1_values[σ], x_opt[1])
-        push!(x2_values[σ], x_opt[2])
+    for σ in σ_values
+        cost = []
+        x1_demand = []
+        x2_demand = []
+        for w1 in w1_range
+            _, minimizer = optimize_cost(α, σ, w1, w2, y)
+            push!(cost, w1 * minimizer[1] + w2 * minimizer[2])
+            push!(x1_demand, minimizer[1])
+            push!(x2_demand, minimizer[2])
+        end
+        push!(costs, cost)
+        push!(x1_values, x1_demand)
+        push!(x2_values, x2_demand)
     end
+
+    # Plot
+    p1 = plot(w1_range, costs, label=["σ = $(σ)" for σ in σ_values], xlabel="w1", ylabel="Cost", title="Cost Function")
+    p2 = plot(w1_range, x1_values, label=["σ = $(σ)" for σ in σ_values], xlabel="w1", ylabel="x1", title="Input Demand x1")
+    p3 = plot(w1_range, x2_values, label=["σ = $(σ)" for σ in σ_values], xlabel="w1", ylabel="x2", title="Input Demand x2")
+    plot(p1, p2, p3, layout=(1, 3), size=(1200, 400))
 end
 
-
-# Plotting
-plot1 = plot(
-    w1_range,
-    [costs[σ] for σ in σ_values],
-    label=[string("σ = ", σ) for σ in σ_values],
-    xlabel="w1",
-    ylabel="Cost",
-    title="Cost Function",
-    legend=:topright
-)
-
-plot2 = plot(
-    w1_range,
-    [x1_values[σ] for σ in σ_values],
-    label=[string("σ = ", σ) for σ in σ_values],
-    xlabel="w1",
-    ylabel="x1",
-    title="Input Demand: x1",
-    legend=:topright
-)
-
-plot3 = plot(
-    w1_range,
-    [x2_values[σ] for σ in σ_values],
-    label=[string("σ = ", σ) for σ in σ_values],
-    xlabel="w1",
-    ylabel="x2",
-    title="Input Demand: x2",
-    legend=:topright
-)
-
-# Combine the plots
-plot(plot1, plot2, plot3, layout=(3, 1), size=(800, 1000))
-
-
+# Parameters for the plot
+w1_range = 0.1:0.1:2.0
+plot_cost_and_demand(α, σ_values, w1_range, w2, y)
