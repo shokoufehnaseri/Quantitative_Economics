@@ -1,7 +1,6 @@
 include("ngm.jl") 
 using DataFrames, Plots
 
-#Function to compute the convergence table
 function convergence_table(γ_values, β, α, δ, k0, k_star)
     results = []
     for γ in γ_values
@@ -22,7 +21,7 @@ function convergence_table(γ_values, β, α, δ, k0, k_star)
     return DataFrame(γ=first.(results), periods=last.(results))
 end
 
-#Function to generate the 4-panel plot
+
 function plot_convergence(γ_values, β, α, δ, k0, time_horizon=100)
     capital_plot = plot(title="Capital", xlabel="Time", ylabel="Capital")
     output_plot = plot(title="Output", xlabel="Time", ylabel="Output")
