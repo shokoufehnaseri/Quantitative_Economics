@@ -1,5 +1,6 @@
-using LinearAlgebra, Statistics, Distributions, Interpolations, NLsolve
+using LinearAlgebra, Statistics, Distributions, Interpolations, NLsolve, QuantEcon
 using Plots, DataFrames
+
 
 # === Parameters ===
 const β = 0.96     # Discount factor
@@ -65,6 +66,26 @@ function lorenz_curve(x)
     return [0; cumulative]
 end
 
+# === Equilibrium Prices Solver ===
+function equilibrium_prices(λ, tol=1e-4)
+    τ = 0.2 # Initial guess for τ
+    r = 0.04 # Interest rate
+    w = 1.0 # Wage
+    
+    V = zeros(shock_size, grid_size)
+    policy = zeros(shock_size, grid_size)
+    
+    for iter in 1:500
+        V_new = V # Placeholder for the Bellman equation solver
+        if norm(V_new - V) < tol
+            break
+        end
+        V .= V_new
+    end
+    return w, r, τ, V, policy
+end
+
+
 # === Bellman Equation Solver ===
 function solve_bellman(V, agrid, z_grid, w, r, λ, τ)
     V_new = similar(V)
@@ -121,8 +142,8 @@ for (λ, (w, r, τ, V, policy)) in equilibria
     println("Gini coefficient for after-tax labor income: ", gini_income)
     
     # Plot Lorenz Curves
-    plot(lorenz_curve(asset_distribution), label="Assets", title="Lorenz Curve for λ = $λ")
-    plot!(lorenz_curve(income_distribution), label="After-tax Income")
+    display(plot(lorenz_curve(asset_distribution), label="Assets", title="Lorenz Curve for λ = $λ"))
+    display(plot!(lorenz_curve(income_distribution), label="After-tax Income"))
     
     # Plot Policy Function
     plot(agrid, policy[1, :], label="Low productivity", title="Policy Function for λ = $λ")
