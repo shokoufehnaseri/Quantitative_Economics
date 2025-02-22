@@ -226,3 +226,6 @@ for (λ, (w, r, τ, V, policy)) in equilibria
     plot(agrid, policy[1, :], label="Low productivity", title="Policy Function for λ = $λ")
     plot!(agrid, policy[end, :], label="High productivity")
 end
+
+
+###issues: asset inequality doesnt change with tax levels
