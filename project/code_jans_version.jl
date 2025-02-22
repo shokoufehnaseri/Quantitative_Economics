@@ -2,6 +2,7 @@ using LinearAlgebra, Statistics, Distributions, Interpolations, NLsolve, QuantEc
 using Plots, DataFrames
 
 
+
 # === Parameters ===
 const β = 0.96     # Discount factor
 const γ = 2.0      # Risk aversion
@@ -67,23 +68,75 @@ function lorenz_curve(x)
 end
 
 # === Equilibrium Prices Solver ===
-function equilibrium_prices(λ, tol=1e-4)
-    τ = 0.2 # Initial guess for τ
-    r = 0.04 # Interest rate
-    w = 1.0 # Wage
-    
+function T(y, τ, λ, ȳ)
+    return y - (1 - τ) * (y / ȳ)^(1 - λ) * ȳ
+end
+
+function find_tau(λ, target_G, tol=1e-4)
+    function revenue_error(τ)
+        w, r, _, _, _ = equilibrium_prices(λ, τ[1], tol)
+        G = sum(T(y, τ[1], λ, mean(z_grid * w)) for y in z_grid * w) / length(z_grid)
+        println("Trying τ = ", τ[1], " → Revenue difference: ", G - target_G)  # Debug
+        return G - target_G
+    end
+
+    res = nlsolve(x -> [revenue_error(x)], [0.2])
+
+    if !res.f_converged
+        println("WARNING: Could not find a valid τ for λ = $λ!")
+        return 0.2  # Fallback to default tax rate
+    end
+
+    return res.zero[1]
+end
+
+
+function equilibrium_prices(λ, τ_guess=0.2, tol=1e-4, max_iter=500)
+    global τ_fixed
+
+    if λ == 0
+        τ_fixed = τ_guess
+    else
+        # Solve for λ = 0 first to get target_G
+        w, r, _, _, _ = equilibrium_prices(0, τ_guess, tol)
+        ȳ = mean(z_grid * w)
+        target_G = sum(T(y, τ_guess, 0, ȳ) for y in z_grid * w) / length(z_grid)
+
+        # Solve for τ using a new function (no recursion)
+        τ_fixed = find_tau_no_recursion(λ, target_G, tol)
+    end
+
+    # Initial guesses
+    r = 0.04
+    w = 1.0
     V = zeros(shock_size, grid_size)
     policy = zeros(shock_size, grid_size)
-    
-    for iter in 1:500
-        V_new = V # Placeholder for the Bellman equation solver
-        if norm(V_new - V) < tol
+
+    for iter in 1:max_iter
+        V_new, policy = solve_bellman(V, agrid, z_grid, w, r, λ, τ_fixed)
+
+        max_change = maximum(abs.(V_new - V))
+        if iter % 50 == 0
+            println("Iteration $iter: Max change = ", max_change)
+        end
+
+        if max_change < tol
+            println("✅ Converged in $iter iterations for λ = $λ with τ = $τ_fixed")
             break
         end
+        
+        if iter == max_iter
+            println("❌ WARNING: Did NOT converge! Max change was $max_change")
+        end
+
         V .= V_new
     end
-    return w, r, τ, V, policy
+
+    return w, r, τ_fixed, V, policy
 end
+
+
+
 
 
 # === Bellman Equation Solver ===
@@ -121,6 +174,30 @@ function solve_bellman(V, agrid, z_grid, w, r, λ, τ)
     end
     return V_new, policy
 end
+
+function find_tau_no_recursion(λ, target_G, tol=1e-4)
+    function revenue_error(τ)
+        # Compute revenue without solving full equilibrium
+        w = 1.0
+        r = 0.04
+        ȳ = mean(z_grid * w)
+        G = sum(T(y, τ[1], λ, ȳ) for y in z_grid * w) / length(z_grid)
+
+        println("Trying τ = ", τ[1], " → Revenue difference: ", G - target_G)
+        return G - target_G
+    end
+
+    res = nlsolve(x -> [revenue_error(x)], [0.2])
+
+    if !res.f_converged
+        println("❌ WARNING: Tax solver did NOT converge for λ = $λ!")
+        return 0.2  # Default fallback
+    end
+
+    println("✅ Found τ = ", res.zero[1])
+    return res.zero[1]
+end
+
 
 # === Solve for Two Equilibria ===
 equilibria = Dict()
