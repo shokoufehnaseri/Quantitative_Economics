@@ -207,7 +207,13 @@ end
 
 # === Compute and Plot Results ===
 for (λ, (w, r, τ, V, policy)) in equilibria
+
+    K = mean(policy)
+    Y = A * K^α
+    K_output_ratio = K / Y
     println("Equilibrium for λ = $λ: w = $w, r = $r, τ = $τ")
+    println("Capital-to-Output Ratio for λ = $λ: ", K_output_ratio)
+
     
     # Compute Gini coefficients
     asset_distribution = agrid
