@@ -81,7 +81,7 @@ end
 # Standard Grid-based Value Function Iteration (VFI)
 ##############################
 function solve_vfi(params::Params, grid_a::Vector{Float64}, grid_z::Vector{Float64}, transition::Array{Float64,2};
-                   tol::Float64=1e-6, maxiter::Int=1000)
+                   tol::Float64=1e-7, maxiter::Int=1000)
     n_a = length(grid_a)
     n_z = length(grid_z)
     V = zeros(n_a, n_z)
@@ -131,7 +131,7 @@ end
 # Interpolation-based Value Function Iteration (VFI)
 ##############################
 function solve_vfi_interp(params::Params, grid_a::Vector{Float64}, grid_z::Vector{Float64}, transition::Array{Float64,2};
-                          tol::Float64=1e-6, maxiter::Int=1000)
+                          tol::Float64=1e-7, maxiter::Int=1000)
     n_a = length(grid_a)
     n_z = length(grid_z)
     V = zeros(n_a, n_z)
@@ -183,10 +183,10 @@ end
 ##############################
 function simulate_stationary_distribution(policy::Array{Float64,2}, grid_a::Vector{Float64},
                                           grid_z::Vector{Float64}, transition::Array{Float64,2};
-                                          simT::Int=10000, burnin::Int=1000)
+                                          simT::Int=20000, burnin::Int=2000)
     n_a = length(grid_a)
     n_z = length(grid_z)
-    N = 10000  # number of households
+    N = 20000  # number of households
     # Initialize households: all start at the lowest asset grid, random productivity index.
     a_indices = ones(Int, N)
     z_indices = rand(1:n_z, N)
@@ -261,7 +261,19 @@ function analyze_simulation(asset_vals::Vector{Float64}, income_vals::Vector{Flo
 end
 
 ##############################
-# Beta Calibration Routine
+# Average Simulation over Multiple Runs
+##############################
+function avg_simulation(policy, grid_a, grid_z, transition; runs::Int=3, simT::Int=10000, burnin::Int=1000)
+    total_agg = 0.0
+    for r in 1:runs
+        asset_vals, a_idx, z_idx = simulate_stationary_distribution(policy, grid_a, grid_z, transition; simT=simT, burnin=burnin)
+        total_agg += mean(asset_vals)
+    end
+    return total_agg / runs
+end
+
+##############################
+# Beta Calibration Routine (with Averaging)
 ##############################
 function calibrate_beta(beta_lower, beta_upper, tol_beta, grid_a, grid_z, transition, params_template, K_target; use_interp=true)
     max_iter = 50
@@ -278,9 +290,8 @@ function calibrate_beta(beta_lower, beta_upper, tol_beta, grid_a, grid_z, transi
             V, policy = solve_vfi(params, grid_a, grid_z, transition)
         end
         
-        # Simulate stationary distribution to compute average assets
-        asset_vals, a_idx, z_idx = simulate_stationary_distribution(policy, grid_a, grid_z, transition)
-        agg_assets = mean(asset_vals)
+        # Average the simulation over multiple runs to compute aggregate assets
+        agg_assets = avg_simulation(policy, grid_a, grid_z, transition; runs=3, simT=10000, burnin=1000)
         diff = agg_assets - K_target
         println("Beta calibration iteration $iter: beta = $(beta_mid), agg_assets = $(agg_assets), diff = $(diff)")
         
@@ -333,7 +344,7 @@ function main()
     ##############################
     # Grids and Discretization
     ##############################
-    n_a = 500
+    n_a = 700
     a_min = φ
     a_max = 20.0
     grid_a = collect(range(a_min, a_max, length=n_a))
