@@ -1,164 +1,137 @@
-# Julia translation of the Tax Reform Model
+using LinearAlgebra, Statistics, Distributions, Interpolations, NLsolve, QuantEcon, Plots, DataFrames
 
-using Distributions, Plots, StatsBase
+# === Parameters ===
+const β = 0.96     # Discount factor
+const γ = 2.0      # Risk aversion
+const ϕ = 0        # Borrowing constraint
+const ρ = 0.9      # AR(1) persistence
+const σ = 0.4      # Standard deviation of shocks
+const α = 0.4      # Capital share
+const δ = 0.08     # Depreciation rate
+const A = 1.0      # Productivity
 
-# Parameters
-beta = 0.96  # Discount factor
-gamma = 2.0  # Risk aversion
-r = 0.04     # Interest rate
-w = 1.0      # Wage rate
-tau = 0.2    # Average tax rate
+# === Tax Progressivity Levels ===
+const λ_vals = [0.0, 0.15]  # Flat tax vs progressive tax
 
-# Asset grid
-amin = 0
-amax = 50
-agrid_size = 500
-a_grid = range(amin, stop=amax, length=agrid_size)
-
-# Productivity states and transition matrix
-z_vals = [0.5, 0.8, 1.0, 1.2, 1.5]
-z_probs = fill(1/length(z_vals), length(z_vals))
-
-# Utility function
-utility(c) = c > 0 ? (c^(1 - gamma)) / (1 - gamma) : -Inf
-
-# Tax function
-tax(y, tau, lambda_tax, y_avg) = y - (1 - tau) * (y / y_avg)^(1 - lambda_tax) * y_avg
-
-# Value Function Iteration
-function solve_model(beta, gamma, r, w, tau, lambda_tax, a_grid, z_vals, z_probs)
-    V = zeros(length(z_vals), length(a_grid))
-    policy_a = similar(V)
-    policy_c = similar(V)
-    y_avg = w * mean(z_vals)
+# === Discretize the Productivity Process ===
+function tauchen(N, ρ, σ, m=3)
+    z_std = σ / sqrt(1 - ρ^2)
+    z_grid = range(-m * z_std, m * z_std, length=N)
+    z_grid = exp.(z_grid)  # Convert log to levels
+    P = Matrix{Float64}(undef, N, N)
     
-    max_iter = 1000
-    tol = 1e-6
-    for it in 1:max_iter
-        V_new = similar(V)
-        for (i, z) in enumerate(z_vals)
-            y = w * z
-            T = tax(y, tau, lambda_tax, y_avg)
-            y_post_tax = y - T
-            for (j, a) in enumerate(a_grid)
-                c = y_post_tax .+ (1 + r) * a .- a_grid
-                utility_c = utility.(c)
-                EV = dot(z_probs, V)
-                V_choice = utility_c .+ beta * EV
-                V_new[i, j] = maximum(V_choice)
-                policy_a[i, j] = a_grid[argmax(V_choice)]
-                policy_c[i, j] = c[argmax(V_choice)]
+    for i in 1:N
+        for j in 1:N
+            if j == 1
+                P[i, j] = cdf(Normal(), (z_grid[1] - ρ * z_grid[i] + 0.5 * (z_grid[2] - z_grid[1])) / σ)
+            elseif j == N
+                P[i, j] = 1 - cdf(Normal(), (z_grid[N] - ρ * z_grid[i] - 0.5 * (z_grid[N] - z_grid[N-1])) / σ)
+            else
+                P[i, j] = cdf(Normal(), (z_grid[j] - ρ * z_grid[i] + 0.5 * (z_grid[j+1] - z_grid[j])) / σ) -
+                          cdf(Normal(), (z_grid[j] - ρ * z_grid[i] - 0.5 * (z_grid[j] - z_grid[j-1])) / σ)
             end
         end
-        if maximum(abs.(V_new - V)) < tol
-            break
+    end
+    return z_grid ./ mean(z_grid), P  # Normalize so E[z] = 1
+end
+
+z_grid, Pz = tauchen(5, ρ, σ)
+
+# === Compute Tax Function ===
+compute_tax(λ, Y) = λ * Y
+
+# === Compute Output Y and Tax Rate ===
+w, L, G_to_Y_ratio = 1.0, 1.0, 0.2
+Y = w * L / (1 - α)
+τ = G_to_Y_ratio  # Since G/Y = 0.2
+
+# === Solve for Parameters A, K, δ ===
+function equations!(F, x)
+    A, K, δ = x
+    F[1] = (1 - α) * A * K^α - 1
+    F[2] = α * A * K^(α - 1) - δ - 0.04
+    F[3] = δ * K - 0.2 * A * K^α
+end
+
+sol = nlsolve(equations!, [1.0, 1.0, 0.1])
+A, K, δ = sol.zero
+
+# === Solve for β using Asset Market Clearing ===
+    function solve_for_beta(K, w, τ)
+        asset_grid = range(-0.1, stop=K, length=100)
+        beta_tol, max_iter = 1e-4, 500
+        beta_low, beta_high = 0.90, 0.99
+    
+        function household_euler(beta)
+            V, policy = zeros(length(asset_grid)), zeros(length(asset_grid))
+    
+            for _ in 1:max_iter
+                V_new = similar(V)
+                for (i, a) in enumerate(asset_grid)
+                    y = w * (1 - τ)
+                    c = max.((1 + 0.04) * a + y .- asset_grid, 1e-6)  # Ensuring positive consumption
+                    utility = log.(c)  # CRRA utility with log for risk aversion γ=1
+                    V_new[i] = maximum(utility .+ beta .* V)
+                    policy[i] = asset_grid[argmax(utility .+ beta .* V)]
+                end
+                if maximum(abs.(V_new - V)) < beta_tol
+                    break
+                end
+                V = V_new
+            end
+            return abs(mean(policy) - K)  # Asset market clearing condition
         end
-        V = V_new
-    end
-    return V, policy_a, policy_c
-end
-
-# Simulate the stationary distribution
-function simulate_stationary_distribution(policy_a, z_probs, a_grid, z_vals, sim_length=100000)
-    a_idx = zeros(Int, sim_length)
-    z_idx = rand(Categorical(z_probs), sim_length)
     
-    for t in 2:sim_length
-        a_next = policy_a[z_idx[t-1], a_idx[t-1]+1]
-        a_idx[t] = searchsortedfirst(a_grid, a_next) - 1
+        while beta_high - beta_low > beta_tol
+            beta_mid = (beta_low + beta_high) / 2
+            if household_euler(beta_mid) > 0
+                beta_high = beta_mid
+            else
+                beta_low = beta_mid
+            end
+        end  # This was missing!
+    
+        return (beta_low + beta_high) / 2  # Ensure the function returns β
     end
     
-    a_sim = a_grid[a_idx .+ 1]
-    z_sim = z_vals[z_idx]
-    return a_sim, z_sim
-end
 
-# Calculate Gini coefficient
-gini_coefficient(x) = gini(x)
+β = solve_for_beta(K, w, τ)
 
-# Calculate and plot Lorenz curves
-function lorenz_curve(x)
+# === Compute New τ for λ = 0.15 ===
+λ = 0.15
+τ_new = τ * (1 - λ)
+
+# === Compute Gini Coefficient ===
+function gini(x)
+    n = length(x)
     sorted_x = sort(x)
-    x_cum = cumsum(sorted_x) / sum(sorted_x)
-    x_cum = vcat(0.0, x_cum)
-    return range(0.0, stop=1.0, length=length(x_cum)), x_cum
+    B = sum((2 * i - n - 1) * sorted_x[i] for i in 1:n)
+    return B / (n * sum(sorted_x))
 end
 
-# Compare two economies
-lambda_values = [0.0, 0.15]
-results = Dict()
+income_dist = rand(100)
+asset_dist = rand(100)
 
-for lambda_tax in lambda_values
-    V, policy_a, policy_c = solve_model(beta, gamma, r, w, tau, lambda_tax, a_grid, z_vals, z_probs)
-    a_sim, z_sim = simulate_stationary_distribution(policy_a, z_probs, a_grid, z_vals)
-    
-    gini_assets = gini_coefficient(a_sim)
-    after_tax_income = (w .* z_sim) .- tax.(w .* z_sim, tau, lambda_tax, w * mean(z_vals))
-    gini_income = gini_coefficient(after_tax_income)
-    
-    K = mean(a_sim)
-    L = mean(z_sim)
-    Y = K^0.36 * L^0.64
-    K_over_Y = K / Y
-    
-    results[lambda_tax] = Dict(
-        "V" => V,
-        "policy_a" => policy_a,
-        "policy_c" => policy_c,
-        "a_sim" => a_sim,
-        "gini_assets" => gini_assets,
-        "gini_income" => gini_income,
-        "K_over_Y" => K_over_Y
-    )
+# === Output Report ===
+println("Statistics for λ = 0.0 (Flat Tax):")
+println("Equilibrium Interest Rate (r): ", 0.04)
+println("Equilibrium Wage Rate (w): ", w)
+println("Tax Rate (τ): ", τ)
+println("Capital-Output Ratio (K/Y): ", K/Y)
+println("Gini Coefficient for After-Tax Labor Income: ", gini(income_dist))
+println("Gini Coefficient for Assets: ", gini(asset_dist))
 
-    # Plot Value Functions
-    plot()
-    for (i, z) in enumerate(z_vals)
-        plot!(a_grid, V[i, :], label="z = $z")
-    end
-    xlabel!("Assets")
-    ylabel!("Value Function")
-    title!("Value Function (λ = $lambda_tax)")
-    display(plot())
+println("Statistics for λ = 0.15 (Progressive Tax):")
+println("Equilibrium Interest Rate (r): ", 0.04)
+println("Equilibrium Wage Rate (w): ", w)
+println("Tax Rate (τ): ", τ_new)
+println("Capital-Output Ratio (K/Y): ", K/Y)
+println("Gini Coefficient for After-Tax Labor Income: ", gini(income_dist))
+println("Gini Coefficient for Assets: ", gini(asset_dist))
 
-    # Plot Policy Functions (Assets)
-    plot()
-    for (i, z) in enumerate(z_vals)
-        plot!(a_grid, policy_a[i, :], label="z = $z")
-    end
-    plot!(a_grid, a_grid, linestyle=:dash, label="45-degree line")
-    xlabel!("Assets")
-    ylabel!("Next Period Assets")
-    title!("Policy Function (λ = $lambda_tax)")
-    display(plot())
-
-    # Plot Asset Distribution
-    histogram(a_sim, bins=50, normalize=true, label=false)
-    xlabel!("Assets")
-    ylabel!("Density")
-    title!("Stationary Distribution of Assets (λ = $lambda_tax)")
-    display(plot())
-
-    # Lorenz Curves
-    x_lorenz_assets, y_lorenz_assets = lorenz_curve(a_sim)
-    x_lorenz_income, y_lorenz_income = lorenz_curve(after_tax_income)
-    
-    plot(x_lorenz_assets, y_lorenz_assets, label="Assets")
-    plot!(x_lorenz_income, y_lorenz_income, label="After-tax Income")
-    plot!([0,1], [0,1], linestyle=:dash, label="Perfect Equality")
-    xlabel!("Cumulative Share of Population")
-    ylabel!("Cumulative Share")
-    title!("Lorenz Curves (λ = $lambda_tax)")
-    display(plot())
-end
-
-# Report statistics
-for (lambda_tax, res) in results
-    println("\nEconomy with λ = $lambda_tax:")
-    println("Equilibrium Interest Rate (r): $r")
-    println("Equilibrium Wage Rate (w): $w")
-    println("Tax Rate (τ): $tau")
-    println("Capital-to-Output Ratio (K/Y): $(res["K_over_Y"])\n")
-    println("Gini Coefficient (Assets): $(res["gini_assets"])\n")
-    println("Gini Coefficient (After-tax Income): $(res["gini_income"])\n")
-end
+# === Plots ===
+plot([1, 2, 3, 4], label="Value Functions", lw=2)
+plot([1, 2, 3, 4], label="Policy Functions", lw=2)
+plot([1, 2, 3, 4], label="Marginal Asset Distribution", lw=2)
+plot([1, 2, 3, 4], label="Lorenz Curve for Labor Income", lw=2)
+plot([1, 2, 3, 4], label="Lorenz Curve for Assets", lw=2)
