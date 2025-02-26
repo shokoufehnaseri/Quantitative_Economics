@@ -1,6 +1,15 @@
 ###########################################################
 # Quantitative Economics Project:
 # Tax Reform in a Heterogeneous Agent Model with Data Analysis
+#
+# This script analyzes the effects of a tax reform that
+# increases labor tax progressivity (λ changes from 0 to 0.15)
+# in a heterogeneous-agent model. It solves the household's
+# Bellman equation using both a grid-based VFI and an
+# interpolation-based VFI, simulates the stationary distribution,
+# calibrates β to clear the asset market, and conducts data analysis
+# (including regression and Lorenz curves) on the simulation outputs.
+#
 # Required packages:
 #   Distributions, Statistics, Plots, Random, Interpolations
 ###########################################################
@@ -10,6 +19,7 @@ using Statistics
 using Plots
 using Random
 using Interpolations
+using StatsBase
 
 ##############################
 # Parameter Structure
@@ -251,6 +261,44 @@ function analyze_simulation(asset_vals::Vector{Float64}, income_vals::Vector{Flo
 end
 
 ##############################
+# Beta Calibration Routine
+##############################
+function calibrate_beta(beta_lower, beta_upper, tol_beta, grid_a, grid_z, transition, params_template, K_target; use_interp=true)
+    max_iter = 50
+    for iter in 1:max_iter
+        beta_mid = (beta_lower + beta_upper) / 2
+        # Update parameters with candidate beta
+        params = Params(beta_mid, params_template.γ, params_template.τ, params_template.λ,
+                        params_template.r, params_template.w, params_template.ρ, params_template.σ)
+                        
+        # Solve household problem
+        if use_interp
+            V, policy = solve_vfi_interp(params, grid_a, grid_z, transition)
+        else
+            V, policy = solve_vfi(params, grid_a, grid_z, transition)
+        end
+        
+        # Simulate stationary distribution to compute average assets
+        asset_vals, a_idx, z_idx = simulate_stationary_distribution(policy, grid_a, grid_z, transition)
+        agg_assets = mean(asset_vals)
+        diff = agg_assets - K_target
+        println("Beta calibration iteration $iter: beta = $(beta_mid), agg_assets = $(agg_assets), diff = $(diff)")
+        
+        if abs(diff) < tol_beta
+            return beta_mid, params, V, policy, agg_assets
+        end
+        
+        # Adjust beta search interval based on diff sign
+        if diff > 0  # Too high assets: agents too patient → lower beta.
+            beta_upper = beta_mid
+        else          # Too low assets: agents not patient enough → increase beta.
+            beta_lower = beta_mid
+        end
+    end
+    return (beta_lower + beta_upper) / 2, params, V, policy, agg_assets
+end
+
+##############################
 # Main Function: Calibration, VFI, Simulation, Plots, Data Analysis
 ##############################
 function main()
@@ -277,7 +325,7 @@ function main()
     
     # Other parameters
     γ = 2.0
-    β = 0.96                  # Discount factor (adjust as needed for market clearing)
+    β_initial = 0.96          # Initial guess for discount factor
     ρ = 0.9
     σ = 0.4
     φ = 0.0                   # Borrowing constraint
@@ -292,12 +340,23 @@ function main()
     
     n_z = 5    # Number of productivity states (per instructions)
     mu = 0.0   # Mean of ln(z) so that E[z] ≈ 1
-    grid_z, transition = tauchen(n_z, mu, ρ, σ; m=3)
+    grid_z, transition = tauchen(n_z, mu, ρ, σ; m=3.0)
 
+    ##############################
+    # Beta Calibration: Adjust β so that simulated asset holdings equal K
+    ##############################
+    # Template parameters for calibration (using baseline tax and λ = 0)
+    params_template = Params(β_initial, γ, τ_baseline, 0.0, r_eq, w_eq, ρ, σ)
+    tol_beta = 1e-3
+    beta_calibrated, params_cal, V_cal, policy_cal, agg_assets_cal = calibrate_beta(0.90, 0.98, tol_beta, grid_a, grid_z, transition, params_template, K; use_interp=use_interp)
+    println("Calibrated beta: ", beta_calibrated)
+    
+    # Update baseline parameters with calibrated beta.
+    params_baseline = Params(beta_calibrated, γ, τ_baseline, 0.0, r_eq, w_eq, ρ, σ)
+    
     ##############################
     # Solve Household Problem: Baseline (λ = 0)
     ##############################
-    params_baseline = Params(β, γ, τ_baseline, 0.0, r_eq, w_eq, ρ, σ)
     if use_interp
         println("Solving VFI for baseline (flat tax, λ = 0) using interpolation...")
         V_baseline, policy_baseline = solve_vfi_interp(params_baseline, grid_a, grid_z, transition)
@@ -332,7 +391,8 @@ function main()
     τ_progressive = τ_baseline   # Adjust τ to keep government revenue constant (approximation)
     println("Progressive tax regime: λ = ", λ_progressive, ", τ = ", τ_progressive)
     
-    params_progressive = Params(β, γ, τ_progressive, λ_progressive, r_eq, w_eq, ρ, σ)
+    # Use the calibrated beta for the progressive regime as well.
+    params_progressive = Params(beta_calibrated, γ, τ_progressive, λ_progressive, r_eq, w_eq, ρ, σ)
     if use_interp
         println("Solving VFI for progressive tax regime (λ = 0.15) using interpolation...")
         V_progressive, policy_progressive = solve_vfi_interp(params_progressive, grid_a, grid_z, transition)
@@ -407,6 +467,20 @@ function main()
     
     println("\n--- Data Analysis: Progressive Regime ---")
     analyze_simulation(asset_vals_progressive, after_tax_income_progressive, "progressive")
+    
+    ##############################
+    # Robustness Checks (Optional)
+    ##############################
+    # You might add code here to run the simulation with different grid sizes,
+    # convergence tolerances, or simulation horizons to check that your results
+    # do not change significantly. For example:
+    #
+    # for n_a_test in [300, 500, 700]
+    #     grid_a_test = collect(range(a_min, a_max, length=n_a_test))
+    #     # Solve and simulate with grid_a_test...
+    # end
+    #
+    # Similarly, try different values for tol in VFI and different simT or N.
 end
 
 # Run the main function
