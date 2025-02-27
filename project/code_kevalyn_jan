@@ -376,12 +376,12 @@ end
 ##############################
 # Find new r and w
 ##############################
-function find_equilibrium_prices(params, grid_a, grid_z, transition)
+function find_equilibrium_prices(params, grid_a, grid_z, transition, α, A, δ)
     r_low, r_high = 0.01, 0.06  # Initial search range for r
-    tol = 1e-2
+    tol = 1e-4
     w_new = 0.0
-    max_iter = 10  # Prevent infinite loops
-    iter_count = 0  # Track iterations
+    max_iter = 100  
+    iter_count = 0  
 
     while abs(r_high - r_low) > tol
         iter_count += 1
@@ -391,35 +391,16 @@ function find_equilibrium_prices(params, grid_a, grid_z, transition)
         end
 
         r_mid = (r_low + r_high) / 2
-        w_new = (1 - params.α) * params.A * ((params.α * params.A) / (r_mid + params.δ))^(params.α / (1 - params.α))
-
-        # Debug: Check if w_new is NaN or negative
-        if isnan(w_new) || w_new < 0
-            println("❌ Error: Computed w_new is invalid! r_mid=", r_mid, ", w_new=", w_new)
-            return NaN, NaN  # Return invalid values to signal failure
-        end
+        w_new = (1 - α) * A * ((α * A) / (r_mid + δ))^(α / (1 - α))
 
         params_new = Params(params.β, params.γ, params.τ, params.λ, r_mid, w_new, params.ρ, params.σ)
+
         _, policy = solve_vfi_interp(params_new, grid_a, grid_z, transition)
         asset_vals, _, _ = simulate_stationary_distribution(policy, grid_a, grid_z, transition)
         K_new = mean(asset_vals)
 
-        # Compute theoretical K_target
-        K_target = ((params.α * params.A) / (r_mid + params.δ))^(1 / (1 - params.α))
+        K_target = ((α * A) / (r_mid + δ))^(1 / (1 - α))
 
-        # Debug: Print intermediate results every 10 iterations
-        if iter_count % 1 == 0
-            println("🔍 Iteration ", iter_count, ": r_mid=", round(r_mid, digits=4), 
-                    ", w_new=", round(w_new, digits=4), ", K_new=", round(K_new, digits=4),
-                    ", K_target=", round(K_target, digits=4))
-        end
-
-        # Debug: Check if K_new is diverging from K_target
-        if abs(K_new - K_target) > 1.0
-            println("⚠️ Warning: Large deviation between K_new (", K_new, ") and K_target (", K_target, ")")
-        end
-
-        # Capital market clearing condition
         if K_new > K_target
             r_high = r_mid
         else
@@ -431,6 +412,7 @@ function find_equilibrium_prices(params, grid_a, grid_z, transition)
             ", w =", round(w_new, digits=5))
     return (r_low + r_high) / 2, w_new
 end
+
 
 
 ##############################
@@ -528,7 +510,7 @@ function main()
     
     # Use the calibrated beta for the progressive regime as well.
     println("Solving for equilibrium r and w in progressive tax regime...")
-    r_progressive, w_progressive = find_equilibrium_prices(params_baseline, grid_a, grid_z, transition)
+    r_progressive, w_progressive = find_equilibrium_prices(params_baseline, grid_a, grid_z, transition, α, A, δ)
     println("Computed r = ", r_progressive, ", w = ", w_progressive)
 
     params_progressive = Params(beta_calibrated, γ, τ_progressive, λ_progressive, r_progressive, w_progressive, ρ, σ)
