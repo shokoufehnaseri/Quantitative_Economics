@@ -39,7 +39,7 @@ end
 # Tauchen's Method for Discretization
 ##############################
 function tauchen(n::Int, mu::Float64, ρ::Float64, σ::Float64; m::Float64=3)
-    # Discretize an AR(1) process for ln(z) with mean mu.
+    
     z_std = sqrt(σ^2 / (1 - ρ^2))
     z_max = mu + m * z_std
     z_min = mu - m * z_std
@@ -59,7 +59,7 @@ function tauchen(n::Int, mu::Float64, ρ::Float64, σ::Float64; m::Float64=3)
             end
         end
     end
-    # Exponentiate grid so that E[z] ≈ 1
+   
     z_grid_exp = exp.(z_grid)
     return z_grid_exp, transition
 end
@@ -97,7 +97,7 @@ function solve_vfi(params::Params, grid_a::Vector{Float64}, grid_z::Vector{Float
                 z = grid_z[iz]
                 max_val = -1e10
                 a_opt = grid_a[1]
-                # Compute disposable income given the tax rule.
+                
                 disp_income = (1 - τ) * (w * z)^(1 - λ)
                 for ia_prime in 1:n_a
                     a_prime = grid_a[ia_prime]
@@ -141,7 +141,7 @@ function solve_vfi_interp(params::Params, grid_a::Vector{Float64}, grid_z::Vecto
     # Use linear interpolation to speed up VFI.
     for iter in 1:maxiter
         V_new = similar(V)
-        # Create an interpolant for each productivity state
+        
         interp_V = [LinearInterpolation(grid_a, V[:, iz], extrapolation_bc=Flat()) for iz in 1:n_z]
         
         for ia in 1:n_a
@@ -187,7 +187,7 @@ function simulate_stationary_distribution(policy::Array{Float64,2}, grid_a::Vect
     n_a = length(grid_a)
     n_z = length(grid_z)
     N = 20000  # number of households
-    # Initialize households: all start at the lowest asset grid, random productivity index.
+    
     a_indices = ones(Int, N)
     z_indices = rand(1:n_z, N)
     
@@ -196,10 +196,10 @@ function simulate_stationary_distribution(policy::Array{Float64,2}, grid_a::Vect
             current_a_index = a_indices[i]
             current_z_index = z_indices[i]
             a_next = policy[current_a_index, current_z_index]
-            # Find the closest grid index for a_next.
+            
             new_a_index = searchsortedfirst(grid_a, a_next)
             a_indices[i] = min(new_a_index, n_a)
-            # Draw next productivity state using the transition probabilities.
+            
             prob = transition[current_z_index, :]
             z_indices[i] = sample(1:n_z, Weights(prob))
         end
@@ -277,8 +277,8 @@ end
 ##############################
 function calibrate_beta(beta_lower, beta_upper, tol_beta, grid_a, grid_z, transition, params_template, K_target; use_interp=true)
     max_iter = 1
-    V, policy = nothing, nothing  # Initialize V and policy to avoid scope issues
-    params = nothing  # Ensure params is defined even if the loop completes all iterations
+    V, policy = nothing, nothing  
+    params = nothing  
     agg_assets = 0.0
 
     for iter in 1:max_iter
@@ -293,7 +293,7 @@ function calibrate_beta(beta_lower, beta_upper, tol_beta, grid_a, grid_z, transi
             V, policy = solve_vfi(params, grid_a, grid_z, transition)
         end
         
-        # Average the simulation over multiple runs to compute aggregate assets
+        
         agg_assets = avg_simulation(policy, grid_a, grid_z, transition; runs=3, simT=10000, burnin=1000)
         diff = agg_assets - K_target
         println("Beta calibration iteration $iter: beta = $(beta_mid), agg_assets = $(agg_assets), diff = $(diff)")
@@ -302,7 +302,7 @@ function calibrate_beta(beta_lower, beta_upper, tol_beta, grid_a, grid_z, transi
             return beta_mid, params, V, policy, agg_assets
         end
         
-        # Adjust beta search interval based on diff sign
+        
         if diff > 0  # Too high assets: agents too patient → lower beta.
             beta_upper = beta_mid
         else          # Too low assets: agents not patient enough → increase beta.
@@ -310,7 +310,7 @@ function calibrate_beta(beta_lower, beta_upper, tol_beta, grid_a, grid_z, transi
         end
     end
     
-    # Ensure return values are valid even if max_iter is reached
+   
     return (beta_lower + beta_upper) / 2, params, V, policy, agg_assets
 end
 
@@ -318,10 +318,10 @@ end
 # Find new Tau
 #############################
 function find_tau_progressive(params_baseline, λ_new, grid_a, grid_z, transition)
-    τ_low, τ_high = 0.1, 0.5  # Initial guess range
+    τ_low, τ_high = 0.1, 0.5  
     tol = 1e-2
-    max_iter = 1  # Prevent infinite loops
-    iter_count = 0  # Track iterations
+    max_iter = 5  # preventing infinite loops
+    iter_count = 0  
 
     while abs(τ_high - τ_low) > tol
         iter_count += 1
@@ -332,10 +332,10 @@ function find_tau_progressive(params_baseline, λ_new, grid_a, grid_z, transitio
 
         τ_mid = (τ_low + τ_high) / 2
 
-        # Debug: Check if τ_mid is within bounds
+        # Debug
         if τ_mid < 0 || τ_mid > 1
             println("❌ Error: Invalid τ_mid! Value = ", τ_mid)
-            return NaN  # Signal failure
+            return NaN  
         end
 
         params_new = Params(params_baseline.β, params_baseline.γ, τ_mid, λ_new,
@@ -348,19 +348,19 @@ function find_tau_progressive(params_baseline, λ_new, grid_a, grid_z, transitio
         after_tax_income = [(1 - τ_mid) * (params_new.w * grid_z[z])^(1 - λ_new) for z in z_idx]
         G_new = sum(τ_mid * (params_new.w * grid_z[z]) for z in z_idx) / length(z_idx)
 
-        # Debug: Check if G_new is NaN or negative
+        # Debug
         if isnan(G_new) || G_new < 0
             println("❌ Error: Invalid government revenue! G_new = ", G_new, ", τ_mid = ", τ_mid)
             return NaN  # Signal failure
         end
 
-        # Debug: Print intermediate results every 10 iterations
+        # Debug
         if iter_count % 1 == 0
             println("🔍 Iteration ", iter_count, ": τ_mid = ", round(τ_mid, digits=4), 
                     ", G_new = ", round(G_new, digits=4), ", Target G = ", params_baseline.τ)
         end
 
-        # Compare with baseline revenue
+        
         if G_new > params_baseline.τ
             τ_high = τ_mid
         else
@@ -377,7 +377,7 @@ end
 # Find new r and w
 ##############################
 function find_equilibrium_prices(params, grid_a, grid_z, transition, α, A, δ)
-    r_low, r_high = 0.01, 0.06  # Initial search range for r
+    r_low, r_high = 0.01, 0.06  
     tol = 1e-4
     w_new = 0.0
     K_new = 0.0
@@ -434,7 +434,7 @@ function main()
     α = 0.36                     # U.S. labor share: 1 - α ≈ 0.64
     r_eq = 0.04                  # interest rate
     w_eq = 1.0                   # wage rate
-    # Equilibrium capital K derived from model conditions (for α=0.36, K≈6.25)
+    
     K = (α - 0.2) / (0.04 * (1 - α))
     println("Equilibrium Capital, K = ", K)
     A = w_eq / ((1 - α) * K^α)
@@ -462,7 +462,7 @@ function main()
     grid_a = collect(range(a_min, a_max, length=n_a))
 
     n_z = 5    # Number of productivity states (per instructions)
-    mu = 0.0   # Mean of ln(z) so that E[z] ≈ 1
+    mu = 0.0   
     grid_z, transition = tauchen(n_z, mu, ρ, σ; m=3.0)
 
     ##############################
@@ -474,7 +474,7 @@ function main()
     beta_calibrated, params_cal, V_cal, policy_cal, agg_assets_cal = calibrate_beta(0.90, 0.98, tol_beta, grid_a, grid_z, transition, params_template, K; use_interp=use_interp)
     println("Calibrated beta: ", beta_calibrated)
 
-    # Update baseline parameters with calibrated beta.
+    # updating baseline parameters with calibrated beta.
     params_baseline = Params(beta_calibrated, γ, τ_baseline, 0.0, r_eq, w_eq, ρ, σ)
 
     ##############################
@@ -497,7 +497,7 @@ function main()
     gini_income_baseline = gini(after_tax_income_baseline)
     println("Gini coefficient for after-tax labor income (baseline) = ", gini_income_baseline)
 
-    # Plot Value and Policy Functions for a median productivity state.
+    # plotting Value and Policy Functions for a median productivity state.
     mid_z = div(n_z, 2)
     p1 = plot(grid_a, V_baseline[:, mid_z], title="Value Function (Baseline)",
                 xlabel="Assets", ylabel="Value", label="V(a,z_mid)")
@@ -511,10 +511,10 @@ function main()
     # Solve Household Problem: Progressive Tax (λ = 0.15)
     ##############################
     λ_progressive = 0.15
-    τ_progressive = find_tau_progressive(params_baseline, λ_progressive, grid_a, grid_z, transition)  # Adjust τ to keep government revenue constant (approximation)
+    τ_progressive = find_tau_progressive(params_baseline, λ_progressive, grid_a, grid_z, transition)  # new τ to keep government revenue constant (approx)
     println("Progressive tax regime: λ = ", λ_progressive, ", τ = ", τ_progressive)
 
-    # Use the calibrated beta for the progressive regime as well.
+    # using the calibrated beta for the progressive regime as well.
     println("Solving for equilibrium r and w in progressive tax regime...")
     r_progressive, w_progressive, K_progressive = find_equilibrium_prices(params_baseline, grid_a, grid_z, transition, α, A, δ)
     Y_progressive = A * K_progressive^α
